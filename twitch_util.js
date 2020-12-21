@@ -132,6 +132,12 @@ DiscordClient.on('ready', () => {
 
 			});
 
+			const totalGuilds = results[0].reduce((acc, guildCount) => acc + guildCount, 0)
+			const totalMembers = results[1].reduce((acc, memberCount) => acc + memberCount, 0)
+
+			const streamerCount = Object.size(db.get(`streamer-cache`))
+			DiscordClient.user.setActivity(`${streamerCount} streamers across ${totalGuilds} servers with a total member count of ${totalMembers}.`, { type: 'WATCHING' })
+
 		}, 30000);
 		(async () => {
 			try {
@@ -151,24 +157,23 @@ DiscordClient.on('presenceUpdate', (oldPresence, newPresence) => {
     newPresence.activities.forEach(activity => {
         if (activity.type == "STREAMING") {
             console.log(`${newPresence.user.tag} is streaming at ${activity.url}.`)
-						var TwitchUsername = activity.url.split("twitch.tv/")[1]
+						const TwitchUsername = activity.url.split("twitch.tv/")[1]
 						console.log(`Their twitch username was ${TwitchUsername}`)
 						if(db.get(`streamer-cache.${TwitchUsername}.streaming`) !== false) {
-							var AllGuilds = Object.keys(StreamerList)
+							const AllGuilds = Object.keys(StreamerList)
 
 							AllGuilds.forEach((GuildID, i) => {
-								var CurrentGuild = DiscordClient.guilds.cache.get(GuildID)
-								var GuildStreamers = db.get(`streamingbot-db.${GuildID}.streamers`)
-								var AllStreamers = Object.keys(GuildStreamers)
+								const CurrentGuild = DiscordClient.guilds.cache.get(GuildID)
+								const GuildStreamers = db.get(`streamingbot-db.${GuildID}.streamers`)
+								const AllStreamers = Object.keys(GuildStreamers)
 
 								if (CurrentGuild.member(newPresence.userID)) {
 									// there is a GuildMember with that ID
-									var CurrentMember = CurrentGuild.member(newPresence.userID)
+									const CurrentMember = CurrentGuild.member(newPresence.userID)
 									let LiveUserRole = CurrentGuild.roles.cache.find(r => r.name.containsIgnoreCase("LIVE NOW"))
 									if(CurrentMember.roles.cache.has(LiveUserRole.id)) {
 										console.log(`User already has live user role.`);
 									} else {
-										console.log(`Nope, noppers, nadda.`);
 										CurrentMember.roles.add(LiveUserRole);
 									}
 								}
