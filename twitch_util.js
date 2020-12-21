@@ -23,6 +23,11 @@ Object.size = function(obj) {
     return size
 }
 
+//Delete the databases:
+// db.delete('streamingbot-db')
+// db.delete('streamer-cache')
+
+
 var StreamerList = db.get('streamingbot-db')
 
 if(StreamerList === null)
@@ -32,11 +37,9 @@ else {
 	console.log( `Streamer list length is `, Object.size(StreamerList) )
 }
 
-//Delete the databases:
-// db.delete('streamingbot-db')
-// db.delete('streamer-cache')
 
 DiscordClient.on('ready', () => {
+
     DiscordClient.user.setStatus('available');
 		DiscordClient.user.setActivity('YouTube', { type: 'WATCHING' });
 
@@ -61,7 +64,7 @@ DiscordClient.on('ready', () => {
 				}
 
 				AllStreamers.forEach((Streamer, i2) => {
-					var CurrentStreamer = db.get(`streamingbot-db.${GuildID}.streamers.${Streamer}`)
+					var CurrentStreamer = db.get(`streamingbot-db.${GuildID}.streamers.${Streamer}`);
 
 					(async () => {
 						try {
@@ -129,19 +132,57 @@ DiscordClient.on('ready', () => {
 
 			});
 
-		}, 30000)
+		}, 30000);
+		(async () => {
+			try {
+				let shardList = await DiscordClient.shard.fetchClientValues('guilds.cache.size');
+				console.log(`Current shard contains: ${shardList} servers`)
+			} catch (error) {
+				console.log('Error loading shard! Error:', error);
+			}
+		})();
 })
 
-DiscordClient.on('presenceUpdate', (oldMember, newMember) => {
+DiscordClient.on('presenceUpdate', (oldPresence, newPresence) => {
 	console.log(`Received Presence Update!`)
-	console.log(oldMember)
-	console.log(newMember)
+	console.log(oldPresence)
+	console.log(newPresence)
+	if (!newPresence.activities) return false
+    newPresence.activities.forEach(activity => {
+        if (activity.type == "STREAMING") {
+            console.log(`${newPresence.user.tag} is streaming at ${activity.url}.`)
+						var TwitchUsername = activity.url.split("twitch.tv/")[1]
+						console.log(`Their twitch username was ${TwitchUsername}`)
+						if(db.get(`streamer-cache.${TwitchUsername}.streaming`) !== false) {
+							var AllGuilds = Object.keys(StreamerList)
+
+							AllGuilds.forEach((GuildID, i) => {
+								var CurrentGuild = DiscordClient.guilds.cache.get(GuildID)
+								var GuildStreamers = db.get(`streamingbot-db.${GuildID}.streamers`)
+								var AllStreamers = Object.keys(GuildStreamers)
+
+								if (CurrentGuild.member(newPresence.userID)) {
+									// there is a GuildMember with that ID
+									var CurrentMember = CurrentGuild.member(newPresence.userID)
+									let LiveUserRole = CurrentGuild.roles.cache.find(r => r.name.containsIgnoreCase("LIVE NOW"))
+									if(CurrentMember.roles.cache.has(LiveUserRole.id)) {
+										console.log(`User already has live user role.`);
+									} else {
+										console.log(`Nope, noppers, nadda.`);
+										CurrentMember.roles.add(LiveUserRole);
+									}
+								}
+
+							})
+						}
+        }
+    })
 })
 
 DiscordClient.on('message', message => {
 	if (!message.content.startsWith(prefix) || message.author.bot) return
 
-	let role = message.guild.roles.cache.find(r => r.name.containsIgnoreCase("LIVE NOW"));
+	let LiveUserRole = message.guild.roles.cache.find(r => r.name.containsIgnoreCase("LIVE NOW"));
 
 	const command = message.content.split(prefix)[1].split(" ")[0]
 	const args = message.content.split(prefix)[1].split(" ")
@@ -172,13 +213,11 @@ DiscordClient.on('message', message => {
 					BroadcastMessage = BroadcastMessage + item + " "
 			})
 
-			//HTTP REQUEST HAPPENS HERE
-
 			var options = {
 			  'method': 'GET',
 			  'hostname': 'api.twitch.tv',
 				'responseType': 'json',
-			  'path': `/helix/users?login=${args[1]}`,
+			  'path': `/helix/users?login=${ttv_username}`,
 			  'headers': {
 			    'client-id': 'gp762nuuoqcoxypju8c569th9wz7q5',
 			    'Authorization': 'Bearer vwwcau4c0ku3k7exj3aqtkk03pg9oy'
@@ -202,12 +241,15 @@ DiscordClient.on('message', message => {
 
 						db.set(`streamer-cache.${ttv_username}.streaming`, false)
 
-						var shardedChannelName = DiscordClient.guilds.cache.get(message.guild.id).channels.cache.find(channel => channel.id === args[0].replace("<#", "").replace(">", "")).name
+						const foundChannelName = DiscordClient.guilds.cache.get(message.guild.id).channels.cache.find(channel => channel.id === channelName.replace("<#", "").replace(">", "")).name
 
-						var ProfileName = db.get(`streamingbot-db.${message.guild.id}.streamers.${ttv_username}.username`)
-						var ProfileImage = db.get(`streamingbot-db.${message.guild.id}.streamers.${ttv_username}.profile_image_url`)
-						var TwitchURL = "https://www.twitch.tv/" + db.get(`streamingbot-db.${message.guild.id}.streamers.${ttv_username}.username`)
-						var NotificationMessage = db.get(`streamingbot-db.${message.guild.id}.streamers.${ttv_username}.message`)
+						// const res = await DiscordClient.shard.fetchClientValues('guilds.cache');
+						// console.log(res);
+
+						const ProfileName = db.get(`streamingbot-db.${message.guild.id}.streamers.${ttv_username}.username`)
+						const ProfileImage = db.get(`streamingbot-db.${message.guild.id}.streamers.${ttv_username}.profile_image_url`)
+						const TwitchURL = "https://www.twitch.tv/" + db.get(`streamingbot-db.${message.guild.id}.streamers.${ttv_username}.username`)
+						const NotificationMessage = db.get(`streamingbot-db.${message.guild.id}.streamers.${ttv_username}.message`)
 
 						const exampleEmbed = new MessageEmbed()
 							.setColor('#0099ff')
@@ -219,7 +261,7 @@ DiscordClient.on('message', message => {
 							.setTimestamp()
 							.setFooter(TwitchURL, ProfileImage)
 
-						message.reply(`Successfully added twitch.tv/${ttv_username} as a new streamer to the channel '${shardedChannelName}'! Preview their notification below!`)
+						message.reply(`Successfully added twitch.tv/${ttv_username} as a new streamer to the channel '${foundChannelName}'! Preview their notification below!`)
 
 						message.reply(exampleEmbed)
 					}
@@ -233,7 +275,7 @@ DiscordClient.on('message', message => {
 
 	}
 
-
+	//Debug commands to be removed on production release
 	if(command === 'resetstreaming') {
 		db.set(`streamer-cache.${args[0]}.streaming`, false)
 		message.reply("We'll check if they're streaming again soon.")
@@ -243,7 +285,42 @@ DiscordClient.on('message', message => {
 		DiscordClient.user.setActivity('YouTube', { type: 'PLAYING' })
 	}
 
-	if (command === 'stats' && ( message.author.username === "Brandito" || message.author.id === "293803976279851011" )) {
+	//Test presence update since bot presence updates don't trigger the presence update listener, only user ones do.
+	if(command === 'twitch') {
+		DiscordClient.user.setActivity("development", { type: "STREAMING", url: "https://www.twitch.tv/commanderroot" })
+		.then(presence => {
+			console.log(`Activity set to: STREAMING ${presence.activities[0].url}`)
+			var TwitchUsername = presence.activities[0].url.split("twitch.tv/")[1]
+			console.log(`Their twitch username was ${TwitchUsername}`)
+			if(db.get(`streamer-cache.${TwitchUsername}.streaming`) !== false) {
+				var AllGuilds = Object.keys(StreamerList)
+
+				AllGuilds.forEach((GuildID, i) => {
+					var CurrentGuild = DiscordClient.guilds.cache.get(GuildID)
+					var GuildStreamers = db.get(`streamingbot-db.${GuildID}.streamers`)
+					var AllStreamers = Object.keys(GuildStreamers)
+
+					if (CurrentGuild.member(DiscordClient.user.id)) {
+						// there is a GuildMember with that ID
+						var CurrentMember = CurrentGuild.member(DiscordClient.user.id)
+						let LiveUserRole = CurrentGuild.roles.cache.find(r => r.name.containsIgnoreCase("LIVE NOW"))
+						if(CurrentMember.roles.cache.has(LiveUserRole.id)) {
+							console.log(`User already has live user role.`);
+						} else {
+							console.log(`Nope, noppers, nadda.`);
+							CurrentMember.roles.add(LiveUserRole);
+						}
+					}
+
+				})
+			}
+		}).catch(console.error);
+	}
+
+	if (command === 'stats') {
+
+		message.reply(`Latency is ${Date.now() - message.createdTimestamp}ms. API Latency is ${Math.round(DiscordClient.ws.ping)}ms`)
+
 		const promises = [
 			DiscordClient.shard.fetchClientValues('guilds.cache.size'),
 			DiscordClient.shard.broadcastEval('this.guilds.cache.reduce((acc, guild) => acc + guild.memberCount, 0)'),
@@ -256,8 +333,7 @@ DiscordClient.on('message', message => {
 
 				const streamerCount = Object.size(db.get(`streamer-cache`))
 				DiscordClient.user.setActivity(`${streamerCount} streamers across ${totalGuilds} servers with a total member count of ${totalMembers}.`, { type: 'WATCHING' })
-			})
-			.catch(console.error)
+			}).catch(console.error)
 	}
 })
 
