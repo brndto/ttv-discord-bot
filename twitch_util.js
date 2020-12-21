@@ -4,6 +4,7 @@ const https = require('https')
 const fs = require('fs')
 const db = require('quick.db')
 const got = require('got')
+const ms = require('ms')
 
 const prefix = 'ttv.'
 
@@ -132,11 +133,19 @@ DiscordClient.on('ready', () => {
 
 			});
 
-			const totalGuilds = results[0].reduce((acc, guildCount) => acc + guildCount, 0)
-			const totalMembers = results[1].reduce((acc, memberCount) => acc + memberCount, 0)
+      const promises = [
+  			DiscordClient.shard.fetchClientValues('guilds.cache.size'),
+  			DiscordClient.shard.broadcastEval('this.guilds.cache.reduce((acc, guild) => acc + guild.memberCount, 0)'),
+  		]
 
-			const streamerCount = Object.size(db.get(`streamer-cache`))
-			DiscordClient.user.setActivity(`${streamerCount} streamers across ${totalGuilds} servers with a total member count of ${totalMembers}.`, { type: 'WATCHING' })
+  		return Promise.all(promises)
+  			.then(results => {
+  				const totalGuilds = results[0].reduce((acc, guildCount) => acc + guildCount, 0)
+  				const totalMembers = results[1].reduce((acc, memberCount) => acc + memberCount, 0)
+
+  				const streamerCount = Object.size(db.get(`streamer-cache`))
+  				DiscordClient.user.setActivity(`${streamerCount} streamers across ${totalGuilds} servers with a total member count of ${totalMembers}.`, { type: 'WATCHING' })
+  			}).catch(console.error)
 
 		}, 30000);
 		(async () => {
@@ -199,7 +208,7 @@ DiscordClient.on('message', message => {
 		case "addstream":
 			console.log(args, args.length)
 			if(args.length < 3) {
-				message.reply("The correct syntax is: !addstream <#channel> <twitch_username> <message to announce here>")
+				message.reply(`The correct syntax is: ${prefix}addstream <#channel> <@DiscordUser>(optional) <twitch_username> <message to announce here>`)
 				return
 			}
 			if(args[0].match(/\<\#\d{1,}\>/) === null) {
@@ -209,12 +218,20 @@ DiscordClient.on('message', message => {
 
 			var channelName = args[0]
 
-			var ttv_username = args[1]
+      var discordUserId = args[1].replace("<@!", "").replace(">", "")
+
+      var ttv_username = args[2]
+
+      if(!args[1].containsIgnoreCase("<@!")) {
+        ttv_username = args[1]
+      }
+
+      console.log(discordUserId)
 
 			var BroadcastMessage = ""
 			args.forEach((item, i) => {
 				console.log(item, i)
-				if(i > 1)
+				if(i > 2)
 					BroadcastMessage = BroadcastMessage + item + " "
 			})
 
@@ -238,18 +255,15 @@ DiscordClient.on('message', message => {
 						const TwitchData = response.body.data[0]
 						db.set(`streamingbot-db.${message.guild.id}.streamers.${ttv_username}.id`, TwitchData.id)
 						db.set(`streamingbot-db.${message.guild.id}.streamers.${ttv_username}.username`, TwitchData.login)
+						db.set(`streamingbot-db.${message.guild.id}.streamers.${ttv_username}.discordid`, discordUserId)
 						db.set(`streamingbot-db.${message.guild.id}.streamers.${ttv_username}.profile_image_url`, TwitchData.profile_image_url)
 						db.set(`streamingbot-db.${message.guild.id}.streamers.${ttv_username}.display_name`, TwitchData.display_name)
 						db.set(`streamingbot-db.${message.guild.id}.streamers.${ttv_username}.channel`, args[0].replace("<#", "").replace(">", ""))
-						db.set(`streamingbot-db.${message.guild.id}.streamers.${ttv_username}.message`, BroadcastMessage.trim())
 						db.set(`streamingbot-db.${message.guild.id}.streamers.${ttv_username}.message`, BroadcastMessage.trim())
 
 						db.set(`streamer-cache.${ttv_username}.streaming`, false)
 
 						const foundChannelName = DiscordClient.guilds.cache.get(message.guild.id).channels.cache.find(channel => channel.id === channelName.replace("<#", "").replace(">", "")).name
-
-						// const res = await DiscordClient.shard.fetchClientValues('guilds.cache');
-						// console.log(res);
 
 						const ProfileName = db.get(`streamingbot-db.${message.guild.id}.streamers.${ttv_username}.username`)
 						const ProfileImage = db.get(`streamingbot-db.${message.guild.id}.streamers.${ttv_username}.profile_image_url`)
@@ -279,6 +293,65 @@ DiscordClient.on('message', message => {
 		default:
 
 	}
+
+  if(command === 'mute') {
+
+    (async () => {
+
+      let MutedRole = message.guild.roles.cache.find(r => r.name.containsIgnoreCase("MUTE"));
+
+      const member = message.mentions.members.first() || message.guild.members.cache.get(args[0]);
+      if (!member)
+        return message.channel.send('Please mention a user or provide a valid user ID');
+      if (!args[1])
+        return message.channel.send('Please enter a length of time of 14 days or less (1s/m/h/d)');
+      let time = ms(args[1]);
+      if (!time || time > 1209600000) // Cap at 14 days, larger than 24.8 days causes integer overflow
+        return message.channel.send('Please enter a length of time of 14 days or less (1s/m/h/d)!');
+
+      let reason = args.slice(2).join(' ');
+      if (!reason) reason = '`None Provided`';
+      if (reason.length > 1024) reason = reason.slice(0, 1021) + '...';
+
+      if (member.roles.cache.has(MutedRole))
+        return message.channel.send('Provided member is already muted');
+
+      // Mute member
+      try {
+        await member.roles.add(MutedRole);
+      } catch (err) {
+        console.log(err)
+        return message.channel.send('Please check the role hierarchy', err.message);
+      }
+      const muteEmbed = new MessageEmbed()
+        .setTitle('Mute Member')
+        .setDescription(`${member} has now been muted for **${ms(time, { long: true })}**.`)
+        .addField('Moderator', message.member, true)
+        .addField('Member', member, true)
+        .addField('Time', `\`${ms(time)}\``, true)
+        .addField('Reason', reason)
+        .setFooter(message.member.displayName,  message.author.displayAvatarURL({ dynamic: true }))
+        .setTimestamp()
+        .setColor(message.guild.me.displayHexColor);
+      message.channel.send(muteEmbed);
+
+      // Unmute member
+      member.timeout = message.client.setTimeout(async () => {
+        try {
+          await member.roles.remove(MutedRole);
+          const unmuteEmbed = new MessageEmbed()
+            .setTitle('Unmute Member')
+            .setDescription(`${member} has been unmuted.`)
+            .setTimestamp()
+            .setColor(message.guild.me.displayHexColor);
+          message.channel.send(unmuteEmbed);
+        } catch (err) {
+          console.log(err)
+          return message.channel.send('Please check the role hierarchy', err.message);
+        }
+      }, time);
+    })();
+  }
 
 	//Debug commands to be removed on production release
 	if(command === 'resetstreaming') {
